@@ -144,21 +144,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 📞 Contact
-
-**Your Name** - [your.email@example.com](mailto:your.email@example.com)
-
-**Project Link**: [https://github.com/yourusername/crime-prediction-dashboard](https://github.com/yourusername/crime-prediction-dashboard)
-
-**LinkedIn**: [Your LinkedIn Profile](https://linkedin.com/in/yourprofile)
-
----
-
-⭐ **If this project helped you, please give it a star!**
-
-*Built with ❤️ for data science and public safety*
