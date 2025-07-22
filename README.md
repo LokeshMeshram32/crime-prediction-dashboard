@@ -2,7 +2,6 @@ Step 2: Create an Amazing README.md
 2A: Create Your README File
 Create a README.md file with this professional template:
 
-text
 # 🚔 Los Angeles Crime Prediction Dashboard
 
 An end-to-end machine learning project that predicts crime patterns in Los Angeles using advanced data science techniques and interactive visualization.
@@ -41,28 +40,23 @@ This project demonstrates a complete data science workflow from raw data process
 git clone https://github.com/yourusername/crime-prediction-dashboard.git
 cd crime-prediction-dashboard
 
-text
 
 2. **Create virtual environment**
 python -m venv crime_prediction
 source crime_prediction/bin/activate # On Windows: crime_prediction\Scripts\activate
 
-text
 
 3. **Install dependencies**
 pip install -r requirements.txt
 
-text
 
 4. **Run data preprocessing (if needed)**
 python data_preprocessing.py
 
-text
 
 5. **Launch dashboard**
 streamlit run dashboard.py
 
-text
 
 6. **Open in browser**: Navigate to `http://localhost:8501`
 
@@ -101,17 +95,7 @@ text
 - Risk level assessment
 - Resource allocation recommendations
 
-## 📁 Project Structure
 
-├── dashboard.py # Main Streamlit application
-├── data_preprocessing.py # Data cleaning and feature engineering
-├── crime_analysis_and_modeling.py # ML model development
-├── requirements.txt # Python dependencies
-├── README.md # Project documentation
-├── screenshots/ # Dashboard screenshots
-└── .gitignore # Git ignore rules
-
-text
 
 ## 🧠 Technical Approach
 
