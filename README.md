@@ -75,18 +75,22 @@ streamlit run dashboard.py
 
 ### 🕒 Temporal Analysis
 ![Temporal Analysis](screenshots/temporal_analysis.png)
+![Temporal Analysis](screenshots/temporal_analysis1.png)
+![Temporal Analysis](screenshots/temporal_analysis2.png)
 - Daily, hourly, and weekly crime patterns
 - Trend analysis with statistical insights
 - Interactive time-series charts
 
 ### 🗺️ Spatial Analysis
 ![Spatial Analysis](screenshots/spatial_analysis.png)
+![Spatial Analysis](screenshots/spatial_analysis2.png)
 - Interactive crime heat maps
 - District-level analysis
 - Geographic crime distribution
 
 ### 🔮 Crime Prediction
 ![Prediction Interface](screenshots/prediction_interface.png)
+![Prediction Interface](screenshots/prediction_interface1.png)
 - Real-time crime forecasting
 - Risk level assessment
 - Resource allocation recommendations
