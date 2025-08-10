@@ -33,7 +33,7 @@ This project demonstrates a complete data science workflow from raw data process
 ### Installation
 
 1. **Clone the repository**
-git clone https://github.com/yourusername/crime-prediction-dashboard.git
+git clone https://github.com/LokeshMeshram32/crime-prediction-dashboard.git
 cd crime-prediction-dashboard
 
 
@@ -144,3 +144,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
+
