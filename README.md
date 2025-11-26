@@ -33,7 +33,7 @@ This project demonstrates a complete data science workflow from raw data process
 ### Installation
 
 1. **Clone the repository**
-git clone https://github.com/yourusername/crime-prediction-dashboard.git
+git clone https://github.com/LokeshMeshram32/crime-prediction-dashboard.git
 cd crime-prediction-dashboard
 
 text
