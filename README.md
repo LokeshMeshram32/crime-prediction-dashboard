@@ -60,7 +60,7 @@ streamlit run dashboard.py
 text
 
 6. **Open in browser**: Navigate to `http://localhost:8501`
-7. **Deployed App**: `https://crime-prediction-dashboard-55uehdcbyvp9sshhxrkt6o.streamlit.app/`
+7. **Deployed App**: https://crime-prediction-dashboard-55uehdcbyvp9sshhxrkt6o.streamlit.app/
 
 ## 📊 Project Results
 
