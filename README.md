@@ -1,8 +1,3 @@
-Step 2: Create an Amazing README.md
-2A: Create Your README File
-Create a README.md file with this professional template:
-
-text
 # 🚔 Los Angeles Crime Prediction Dashboard
 
 An end-to-end machine learning project that predicts crime patterns in Los Angeles using advanced data science techniques and interactive visualization.
