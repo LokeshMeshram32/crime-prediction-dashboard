@@ -1,73 +1,70 @@
-# data_loader.py - Your first data science script!
-
+import os
+import requests
 import pandas as pd
-import numpy as np
+import streamlit as st
+import tempfile
 
-def load_crime_data(filename):
-    """
-    Load and inspect crime data from CSV file
-    """
-    print("🔄 Loading crime data...")
-    
-    # Load the CSV file
+
+def download_file_from_google_drive(file_id):
+    """Download large Google Drive file (>100MB) handling confirmation token."""
+    URL = "https://drive.google.com/uc?export=download"
+
+    session = requests.Session()
+    response = session.get(URL, params={'id': file_id}, stream=True)
+
+    # Check for confirmation token for large files
+    def get_confirm_token(resp):
+        for key, value in resp.cookies.items():
+            if key.startswith("download_warning"):
+                return value
+        return None
+
+    token = get_confirm_token(response)
+    if token:
+        response = session.get(URL, params={'id': file_id, 'confirm': token}, stream=True)
+
+    # Write to a temporary file
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+
+    CHUNK_SIZE = 32768
+    for chunk in response.iter_content(CHUNK_SIZE):
+        if chunk:
+            tmp.write(chunk)
+
+    tmp.flush()
+    return tmp.name
+
+
+@st.cache_data
+def load_crime_data():
+    """Load large dataset from Google Drive or fallback local."""
     try:
-        df = pd.read_csv(filename)
-        print(f"✅ Successfully loaded {len(df)} crime records!")
-        return df
-    except FileNotFoundError:
-        print(f"❌ Could not find file: {filename}")
-        print("Make sure the file is in your project folder!")
-        return None
+        # file IDs from environment variables
+        file_id = os.getenv("GD_CLEAN_FILE_ID", "").strip()
+
+        if not file_id:
+            st.error("❌ No Google Drive file ID provided. Set GD_CLEAN_FILE_ID in Streamlit Secrets.")
+            return None, None, None
+
+        st.info("📥 Downloading dataset from Google Drive... (only first time)")
+
+        # Download CSV
+        downloaded_path = download_file_from_google_drive(file_id)
+
+        df = pd.read_csv(downloaded_path, parse_dates=['datetime', 'date'], low_memory=False)
+
+        # Clean & format dates
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        df = df.dropna(subset=['date'])
+        df.columns = [c.strip() for c in df.columns]
+
+        if 'day_name' not in df.columns:
+            df['day_name'] = df['date'].dt.day_name()
+        if 'is_weekend' not in df.columns:
+            df['is_weekend'] = df['date'].dt.weekday >= 5
+
+        return df, df['date'].min(), df['date'].max()
+
     except Exception as e:
-        print(f"❌ Error loading data: {e}")
-        return None
-
-def inspect_data(df):
-    """
-    Look at the structure and quality of our data
-    """
-    print("\n📊 DATA INSPECTION REPORT")
-    print("=" * 50)
-    
-    # Basic info
-    print(f"Number of rows: {len(df)}")
-    print(f"Number of columns: {len(df.columns)}")
-    
-    # Column names
-    print(f"\nColumn names:")
-    for i, col in enumerate(df.columns, 1):
-        print(f"  {i}. {col}")
-    
-    # Data types
-    print(f"\nData types:")
-    print(df.dtypes)
-    
-    # Missing values
-    print(f"\nMissing values:")
-    missing_counts = df.isnull().sum()
-    for col in missing_counts.index:
-        if missing_counts[col] > 0:
-            print(f"  {col}: {missing_counts[col]} missing")
-    
-    # First few rows
-    print(f"\nFirst 5 rows of data:")
-    print(df.head())
-    
-    return df
-
-# Main execution
-if __name__ == "__main__":
-    # Replace 'your_crime_data.csv' with your actual filename
-    filename = "Crime_Data_from_2020_to_Present.csv"  # Update this!
-    
-    # Load the data
-    crime_df = load_crime_data(filename)
-    
-    if crime_df is not None:
-        # Inspect the data
-        inspect_data(crime_df)
-        
-        # Save a summary
-        print(f"\n💾 Saving data summary...")
-        crime_df.describe().to_csv("data_summary.csv")
-        print(f"✅ Summary saved to 'data_summary.csv'")
+        st.error(f"❌ Error loading Google Drive file: {str(e)}")
+        return None, None, None
