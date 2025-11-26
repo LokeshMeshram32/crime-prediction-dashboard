@@ -65,6 +65,7 @@ streamlit run dashboard.py
 text
 
 6. **Open in browser**: Navigate to `http://localhost:8501`
+7. **Deployed App**: `https://crime-prediction-dashboard-55uehdcbyvp9sshhxrkt6o.streamlit.app/`
 
 ## 📊 Project Results
 
@@ -141,40 +142,3 @@ text
 - **Real-time Processing**: Sub-second prediction generation
 - **Interactive Visualization**: Professional dashboard interface
 - **Reproducible Pipeline**: Complete end-to-end automation
-
-## 🔧 Future Enhancements
-
-- [ ] Integration with real-time crime APIs
-- [ ] Advanced deep learning models (LSTM, GRU)
-- [ ] Mobile-responsive design
-- [ ] Additional data sources (weather, demographics)
-- [ ] Automated model retraining pipeline
-- [ ] API endpoints for external integration
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 📞 Contact
-
-**Your Name** - [your.email@example.com](mailto:your.email@example.com)
-
-**Project Link**: [https://github.com/yourusername/crime-prediction-dashboard](https://github.com/yourusername/crime-prediction-dashboard)
-
-**LinkedIn**: [Your LinkedIn Profile](https://linkedin.com/in/yourprofile)
-
----
-
-⭐ **If this project helped you, please give it a star!**
-
-*Built with ❤️ for data science and public safety*
