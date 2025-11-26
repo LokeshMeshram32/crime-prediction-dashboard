@@ -1,6 +1,5 @@
 # dashboard.py - Interactive Crime Prediction Dashboard (Complete Fixed Version)
 import streamlit as st
-import os
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -10,6 +9,8 @@ from streamlit_folium import st_folium
 from folium.plugins import MarkerCluster, HeatMap
 from datetime import datetime, timedelta
 import warnings
+import os
+import re
 import requests
 import tempfile
 
@@ -200,7 +201,11 @@ CHART_COLORS = {
 
 @st.cache_data
 def load_crime_data():
-    """Robust loader: download from Google Drive, detect/normalize date column, and return df,min_date,max_date."""
+    """
+    Robust loader: download large CSV from Google Drive (handles cookie token or HTML confirmation token),
+    then parse and normalize a date column and return (df, min_date, max_date).
+    Requires environment variable GD_CLEAN_FILE_ID set to the file id (not the full URL).
+    """
     try:
         file_id = os.getenv("GD_CLEAN_FILE_ID", "").strip()
         if not file_id:
@@ -209,105 +214,127 @@ def load_crime_data():
 
         st.info("📥 Downloading dataset from Google Drive... (only first time, then cached)")
 
-        URL = "https://drive.google.com/uc?export=download"
+        base_url = "https://drive.google.com/uc?export=download"
         session = requests.Session()
-        response = session.get(URL, params={'id': file_id}, stream=True)
+        resp = session.get(base_url, params={'id': file_id}, stream=True, timeout=60)
 
-        # Check for confirmation token for very large files
-        def get_confirm_token(resp):
-            for k, v in resp.cookies.items():
-                if k.startswith("download_warning"):
-                    return v
-            return None
+        if resp.status_code != 200:
+            # still try to continue but show status
+            st.warning(f"⚠️ initial request returned status {resp.status_code}. Continuing to attempt download...")
 
-        token = get_confirm_token(response)
+        # 1) Try to find confirm token in cookies (older approach)
+        token = None
+        for k, v in resp.cookies.items():
+            if k.startswith("download_warning"):
+                token = v
+                break
+
+        # 2) If no cookie token, try to parse token from returned HTML form
+        if not token:
+            text = resp.text or ""
+            # Look for confirm token patterns in html:
+            # - name="confirm" value="t"
+            m = re.search(r'name="confirm"\s+value="([^"]+)"', text)
+            if m:
+                token = m.group(1)
+            else:
+                # Another pattern: confirm=TOKEN in href or form action
+                m2 = re.search(r"confirm=([0-9A-Za-z-_]+)&", text)
+                if m2:
+                    token = m2.group(1)
+
+        # If we got a token, call again with confirm param
         if token:
-            response = session.get(URL, params={'id': file_id, 'confirm': token}, stream=True)
+            resp = session.get(base_url, params={'id': file_id, 'confirm': token}, stream=True, timeout=60)
 
-        # Stream to temp file
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-        CHUNK_SIZE = 32768
-        for chunk in response.iter_content(CHUNK_SIZE):
-            if chunk:
-                tmp.write(chunk)
-        tmp.flush()
-
-        # Try reading CSV (no parse_dates yet - we'll attempt after we inspect columns)
-        try:
-            df = pd.read_csv(tmp.name, low_memory=False)
-        except Exception as e:
-            st.error(f"❌ Failed to read CSV. Error: {e}")
+        # Check final response
+        if resp.status_code != 200:
+            st.error(f"❌ Failed to download file: HTTP {resp.status_code}")
             return None, None, None
 
-        # Show columns and first rows so you can see what was downloaded
+        # Stream bytes into a temp file (binary)
+        tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+        CHUNK = 32768
+        try:
+            for chunk in resp.iter_content(CHUNK):
+                if chunk:
+                    tmpf.write(chunk)
+            tmpf.flush()
+            tmpf.close()
+        except Exception as e:
+            st.error(f"❌ Failed while writing download to temp file: {e}")
+            return None, None, None
+
+        # Attempt to read CSV (no parse_dates yet)
+        try:
+            df = pd.read_csv(tmpf.name, low_memory=False)
+        except Exception as e:
+            st.error(f"❌ Failed to read CSV after download: {e}")
+            return None, None, None
+
+        # Show columns & sample so we can inspect
         st.write("🔎 Columns detected in the downloaded CSV:", list(df.columns))
         st.write("📄 File preview (first 5 rows):")
         st.dataframe(df.head(5))
 
-        # Normalize column names (strip whitespace)
+        # Normalize column names
         df.columns = [c.strip() for c in df.columns]
 
-        # If 'date' exists, parse it. Otherwise try alternatives
-        date_col_candidates = [
+        # Detect date column candidates and parse
+        date_candidates = [
             'date', 'Date', 'DATE',
             'datetime', 'DateTime', 'DATE_TIME',
             'incident_date', 'occurred_on', 'report_date', 'occurred_at',
-            'crime_date', 'offense_date'
+            'crime_date', 'offense_date', 'reported_date', 'reportdate'
         ]
-
-        found_date_col = None
-        for cand in date_col_candidates:
-            if cand in df.columns:
-                found_date_col = cand
+        found = None
+        for c in date_candidates:
+            if c in df.columns:
+                found = c
                 break
 
-        # If no candidate found, try to infer a datetime column by dtype or name similarity
-        if not found_date_col:
-            # pick any column with dtype object but containing '-' or '/' in many rows
+        # fallback: try to infer a date-like column by sampling string patterns
+        if not found:
             for col in df.columns:
                 if df[col].dtype == object:
-                    sample = df[col].dropna().astype(str).head(20).tolist()
-                    if any('/' in s or '-' in s or ':' in s for s in sample):
-                        found_date_col = col
+                    sample_vals = df[col].dropna().astype(str).head(20).tolist()
+                    if any('/' in s or '-' in s or ':' in s or re.search(r'\d{4}', s) for s in sample_vals):
+                        found = col
                         break
 
-        if not found_date_col:
-            st.error("❌ No date-like column found in CSV. Please check your Google Drive file. Columns found:")
-            st.warning(f"{list(df.columns)}")
-            st.info("Look for a column containing dates (e.g., 'date', 'datetime', 'incident_date') or rename it to 'date'.")
+        if not found:
+            st.error("❌ No date-like column found in CSV. Please check the file uploaded to Google Drive.")
+            st.warning(f"Columns found: {list(df.columns)}")
             return None, None, None
 
-        # Try to parse the found date column into datetime
+        # Parse the found column into datetime 'date'
         try:
-            df['date'] = pd.to_datetime(df[found_date_col], errors='coerce')
+            df['date'] = pd.to_datetime(df[found], errors='coerce')
         except Exception as e:
-            st.error(f"❌ Could not parse column '{found_date_col}' as dates. Error: {e}")
-            st.info("Please ensure the column contains parseable date/datetime strings (e.g., YYYY-MM-DD).")
+            st.error(f"❌ Could not parse column '{found}' as dates. Error: {e}")
             return None, None, None
 
-        # Drop rows with invalid dates (same behaviour as original)
+        # Drop rows without valid dates
         df = df.dropna(subset=['date'])
-        if len(df) == 0:
-            st.error("❌ After parsing, no valid dates remain in the dataset. Check date format or the selected file.")
+        if df.shape[0] == 0:
+            st.error("❌ After parsing dates, zero rows remain. Check date format in your CSV.")
             return None, None, None
 
-        # Also keep original datetime column if present and parse it
+        # Also parse 'datetime' column if present
         if 'datetime' in df.columns and df['datetime'].dtype == object:
             try:
                 df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
             except Exception:
                 pass
 
-        # Show what date column was used
-        st.success(f"✅ Using column '{found_date_col}' as the date field (parsed to 'date').")
-        st.write("Date range in dataset:", str(df['date'].min()), "→", str(df['date'].max()))
+        st.success(f"✅ Using column '{found}' as date. Rows: {len(df):,}. Date range: {df['date'].min().date()} → {df['date'].max().date()}")
 
         return df, df['date'].min(), df['date'].max()
 
     except Exception as e:
         st.error(f"❌ Unexpected error loading data: {e}")
         return None, None, None
-
+    
 def create_main_header():
     """Create the main dashboard header with improved styling"""
     st.markdown('<h1 class="main-header">🚔 Los Angeles Crime Prediction Dashboard</h1>', 
