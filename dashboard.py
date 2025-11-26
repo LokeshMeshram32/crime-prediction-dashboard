@@ -9,6 +9,9 @@ from streamlit_folium import st_folium
 from folium.plugins import MarkerCluster, HeatMap
 from datetime import datetime, timedelta
 import warnings
+import requests
+import tempfile
+
 warnings.filterwarnings('ignore')
 
 # Page configuration
@@ -196,28 +199,67 @@ CHART_COLORS = {
 
 @st.cache_data
 def load_crime_data():
-    """Load and cache the clean crime data with proper date handling"""
+    """Load large clean crime dataset from Google Drive using file ID."""
     try:
-        df = pd.read_csv('clean_crime_data.csv')
-        
-        # Ensure datetime columns are properly formatted
+        # Read Google Drive File ID from Streamlit secrets/environment
+        file_id = os.getenv("GD_CLEAN_FILE_ID", "").strip()
+
+        if not file_id:
+            st.error("❌ GD_CLEAN_FILE_ID is not set. Add it in Streamlit Secrets.")
+            return None, None, None
+
+        st.info("📥 Downloading dataset from Google Drive... (only first time, then cached)")
+
+        # Google Drive download URL
+        URL = "https://drive.google.com/uc?export=download"
+
+        session = requests.Session()
+        response = session.get(URL, params={'id': file_id}, stream=True)
+
+        # Detect confirmation token (needed for files >100MB)
+        def get_confirm_token(resp):
+            for key, value in resp.cookies.items():
+                if key.startswith("download_warning"):
+                    return value
+            return None
+
+        token = get_confirm_token(response)
+
+        if token:
+            response = session.get(
+                URL,
+                params={'id': file_id, 'confirm': token},
+                stream=True
+            )
+
+        # Write file to a temporary path
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+
+        CHUNK_SIZE = 32768
+        for chunk in response.iter_content(CHUNK_SIZE):
+            if chunk:
+                tmp_file.write(chunk)
+
+        tmp_file.flush()
+
+        # Load CSV into pandas
+        df = pd.read_csv(tmp_file.name, low_memory=False)
+
+        # Parse date columns (same as your original code)
         if 'datetime' in df.columns:
             df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
         if 'date' in df.columns:
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            
-        # Remove rows with invalid dates
+
+        # Remove invalid rows
         df = df.dropna(subset=['date'])
-        
-        # Get actual date range from data
+
+        # Get date range
         min_date = df['date'].min()
         max_date = df['date'].max()
-        
+
         return df, min_date, max_date
-    except FileNotFoundError:
-        st.error("❌ **Error**: `clean_crime_data.csv` not found. Please run the preprocessing script first.")
-        st.info("💡 **Solution**: Run `python data_preprocessing.py` to generate the required data file.")
-        return None, None, None
+
     except Exception as e:
         st.error(f"❌ **Error loading data**: {str(e)}")
         return None, None, None
