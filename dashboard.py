@@ -200,139 +200,107 @@ CHART_COLORS = {
     'info': '#0288d1'
 }
 
+
 @st.cache_data
 def load_crime_data():
     """
-    Robust loader for large Google Drive CSVs.
+    Quiet, robust loader for large Google Drive CSVs.
     - Reads GD_CLEAN_FILE_ID from env/secrets (file id only)
-    - Handles Drive virus-scan HTML warning by parsing the form action and hidden inputs
-    - Streams CSV to a temp file, loads with pandas, detects date column
-    Returns: (df, min_date, max_date) or (None, None, None) on failure
+    - Handles Drive virus-scan HTML by parsing the form action + hidden inputs
+    - Streams CSV to temp file and returns (df, min_date, max_date)
+    - Minimal UI noise: uses spinner while downloading, only surfaces errors
     """
+    file_id = os.getenv("GD_CLEAN_FILE_ID", "").strip()
+    if not file_id:
+        st.error("GD_CLEAN_FILE_ID not set. Add it in Streamlit Secrets.")
+        return None, None, None
+
+    base_uc = "https://drive.google.com/uc?export=download"
+    session = requests.Session()
+
     try:
-        file_id = os.getenv("GD_CLEAN_FILE_ID", "").strip()
-        if not file_id:
-            st.error("❌ GD_CLEAN_FILE_ID not set. Add it in Streamlit Secrets (Settings → Secrets).")
-            return None, None, None
+        with st.spinner("Downloading dataset from Google Drive (first run may take a while)..."):
+            r = session.get(base_uc, params={'id': file_id}, stream=True, timeout=60)
 
-        st.info("📥 Downloading dataset from Google Drive... (only first time, then cached)")
-
-        session = requests.Session()
-        # initial request (uc endpoint)
-        base_uc = "https://drive.google.com/uc?export=download"
-        r = session.get(base_uc, params={'id': file_id}, stream=True, timeout=60)
-
-        # If response seems like HTML (Drive warning page), parse form action + hidden inputs
-        content_type = r.headers.get("Content-Type", "")
-        text_snippet = ""
-        try:
-            # small-safe read of text to detect HTML
-            text_snippet = r.text[:3000] if r.text else ""
-        except Exception:
+            # quick check for HTML warning; read small text safely
             text_snippet = ""
+            try:
+                text_snippet = r.text[:4000]
+            except Exception:
+                text_snippet = ""
 
-        is_html = "<html" in text_snippet.lower() or "google drive" in text_snippet.lower()
+            is_html = "<html" in text_snippet.lower() or "google drive" in text_snippet.lower()
 
-        if is_html:
-            # look for form action
-            # try to find <form ... action="https://drive.usercontent.google.com/download" ...>
-            form_action = None
-            m_action = re.search(r'<form[^>]+action=["\']([^"\']+)["\']', text_snippet, flags=re.I)
-            if m_action:
-                form_action = unescape(m_action.group(1))
+            if is_html:
+                # parse form action and hidden inputs from the HTML
+                form_action = None
+                m_action = re.search(r'<form[^>]+action=["\']([^"\']+)["\']', text_snippet, flags=re.I)
+                if m_action:
+                    form_action = unescape(m_action.group(1))
+                hidden_inputs = {}
+                for m in re.finditer(r'<input[^>]+type=["\']hidden["\'][^>]*>', text_snippet, flags=re.I):
+                    inp = m.group(0)
+                    name_m = re.search(r'name=["\']([^"\']+)["\']', inp, flags=re.I)
+                    val_m = re.search(r'value=["\']([^"\']*)["\']', inp, flags=re.I)
+                    if name_m:
+                        name = unescape(name_m.group(1))
+                        val = unescape(val_m.group(1)) if val_m else ""
+                        hidden_inputs[name] = val
 
-            # collect hidden inputs name/value
-            hidden_inputs = dict()
-            for m in re.finditer(r'<input[^>]+type=["\']hidden["\'][^>]*>', text_snippet, flags=re.I):
-                inp = m.group(0)
-                name_m = re.search(r'name=["\']([^"\']+)["\']', inp, flags=re.I)
-                val_m = re.search(r'value=["\']([^"\']*)["\']', inp, flags=re.I)
-                if name_m:
-                    name = unescape(name_m.group(1))
-                    val = unescape(val_m.group(1)) if val_m else ""
-                    hidden_inputs[name] = val
-
-            # If form action exists, call it with hidden inputs as params
-            if form_action:
-                # some form_action values are relative (start with '/'), make absolute if necessary
-                if form_action.startswith("/"):
-                    form_action = "https://drive.google.com" + form_action
-                st.info("🔁 Confirming download by submitting Drive confirmation form...")
-                r = session.get(form_action, params=hidden_inputs, stream=True, timeout=120)
-            else:
-                # fallback: try confirm token from hidden_inputs or cookie
-                token = hidden_inputs.get('confirm') or next((v for k,v in r.cookies.items() if k.startswith("download_warning")), None)
-                if token:
-                    r = session.get(base_uc, params={'id': file_id, 'confirm': token}, stream=True, timeout=120)
+                if form_action:
+                    if form_action.startswith("/"):
+                        form_action = "https://drive.google.com" + form_action
+                    r = session.get(form_action, params=hidden_inputs, stream=True, timeout=120)
                 else:
-                    st.error("❌ Could not find confirmation token or form action in Drive's response.")
-                    st.write("Please ensure the file is shared (Anyone with link) and the GD_CLEAN_FILE_ID is correct.")
-                    return None, None, None
+                    token = hidden_inputs.get('confirm') or next((v for k, v in r.cookies.items() if k.startswith("download_warning")), None)
+                    if token:
+                        r = session.get(base_uc, params={'id': file_id, 'confirm': token}, stream=True, timeout=120)
+                    else:
+                        st.error("Could not find Drive confirmation token or form action. Ensure file is shared (Anyone with link).")
+                        return None, None, None
 
-        # At this point r should be binary CSV response. Validate content-type or first bytes
-        ct = r.headers.get("Content-Type", "").lower()
-        first_chunk = b""
-        try:
-            # read small chunk to check if it's HTML (sometimes Drive returns HTML even after)
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    first_chunk = chunk
-                    break
-        except Exception:
-            st.error("❌ Download failed while reading response stream.")
-            return None, None, None
-
-        # If first_chunk starts with '<' it's likely HTML error page -> show and abort
-        if first_chunk.lstrip().startswith(b"<"):
-            # read a bit more to show useful snippet
-            snippet = first_chunk + b""
+            # read a small chunk to ensure it's binary CSV rather than HTML
+            first_chunk = b""
             try:
-                snippet += next(r.iter_content(chunk_size=8192))
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        first_chunk = chunk
+                        break
             except Exception:
-                pass
+                st.error("Download interrupted.")
+                return None, None, None
+
+            if first_chunk.lstrip().startswith(b"<"):
+                st.error("Drive returned HTML instead of CSV. Make sure your file is shared (Anyone with link) and GD_CLEAN_FILE_ID is correct.")
+                return None, None, None
+
+            # write entire response to temp file
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
             try:
-                snippet_text = snippet.decode("utf-8", errors="replace")
-            except Exception:
-                snippet_text = str(snippet)
-            st.error("❌ Drive returned HTML instead of CSV. Here is a preview of the response (first bytes):")
-            st.code(snippet_text[:4000])
-            st.info("Make sure file is shared publicly (Anyone with link). If problem persists, consider using S3/GCS or GitHub Release.")
-            return None, None, None
+                tmp.write(first_chunk)
+                for chunk in r.iter_content(chunk_size=32768):
+                    if chunk:
+                        tmp.write(chunk)
+                tmp.flush()
+                tmp.close()
+            except Exception as e:
+                st.error(f"Error writing download to temp file: {e}")
+                return None, None, None
 
-        # Write the first chunk and remaining bytes to a temp file in binary
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-        try:
-            tmp.write(first_chunk)
-            for chunk in r.iter_content(chunk_size=32768):
-                if chunk:
-                    tmp.write(chunk)
-            tmp.flush()
-            tmp.close()
-        except Exception as e:
-            st.error(f"❌ Error while writing download to temp file: {e}")
-            return None, None, None
-
-        # Try reading CSV
+        # load CSV (no noisy UI)
         try:
             df = pd.read_csv(tmp.name, low_memory=False)
         except Exception as e:
-            st.error(f"❌ Failed to parse CSV after download: {e}")
+            st.error(f"Failed to read CSV: {e}")
             return None, None, None
 
-        # Show columns & preview for debugging
-        st.write("🔎 Columns detected in the downloaded CSV:", list(df.columns))
-        st.write("📄 File preview (first 5 rows):")
-        st.dataframe(df.head(5))
-
-        # Normalize column names
+        # normalize columns
         df.columns = [c.strip() for c in df.columns]
 
-        # Detect date-like column
+        # detect date column (prefer 'date' then common alternatives)
         date_candidates = [
-            'date', 'Date', 'DATE',
-            'datetime', 'DateTime', 'DATE_TIME',
-            'incident_date', 'occurred_on', 'report_date', 'occurred_at',
-            'crime_date', 'offense_date', 'reported_date', 'reportdate'
+            'date', 'Date', 'datetime', 'Datetime', 'incident_date',
+            'occurred_on', 'report_date', 'occurred_at', 'crime_date', 'offense_date'
         ]
         found = None
         for c in date_candidates:
@@ -340,7 +308,7 @@ def load_crime_data():
                 found = c
                 break
 
-        # fallback: infer by sampling
+        # fallback inference
         if not found:
             for col in df.columns:
                 if df[col].dtype == object:
@@ -350,37 +318,34 @@ def load_crime_data():
                         break
 
         if not found:
-            st.error("❌ No date-like column found in CSV. Please check the Google Drive file you uploaded.")
-            st.warning(f"Columns found: {list(df.columns)}")
+            st.error("No date-like column found in CSV. Check the uploaded Google Drive file.")
             return None, None, None
 
-        # Parse date
+        # parse and drop invalid dates (same behavior as your original)
         try:
             df['date'] = pd.to_datetime(df[found], errors='coerce')
         except Exception as e:
-            st.error(f"❌ Could not parse column '{found}' as dates: {e}")
+            st.error(f"Could not parse date column '{found}': {e}")
             return None, None, None
 
         df = df.dropna(subset=['date'])
         if df.shape[0] == 0:
-            st.error("❌ After parsing dates, zero rows remain. Check date format in your CSV.")
+            st.error("After parsing dates, no valid rows remain. Verify date format in your CSV.")
             return None, None, None
 
-        # Optionally parse datetime column if present
+        # also parse 'datetime' if present
         if 'datetime' in df.columns and df['datetime'].dtype == object:
             try:
                 df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
             except Exception:
                 pass
 
-        st.success(f"✅ Using column '{found}' as date. Rows: {len(df):,}. Date range: {df['date'].min().date()} → {df['date'].max().date()}")
-
+        # return silently (no extra tables or debug prints)
         return df, df['date'].min(), df['date'].max()
 
     except Exception as e:
-        st.error(f"❌ Unexpected error loading data: {e}")
+        st.error(f"Unexpected error loading data: {e}")
         return None, None, None
-
     
 def create_main_header():
     """Create the main dashboard header with improved styling"""
