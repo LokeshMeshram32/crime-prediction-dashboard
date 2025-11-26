@@ -200,69 +200,112 @@ CHART_COLORS = {
 
 @st.cache_data
 def load_crime_data():
-    """Load large clean crime dataset from Google Drive using file ID."""
+    """Robust loader: download from Google Drive, detect/normalize date column, and return df,min_date,max_date."""
     try:
-        # Read Google Drive File ID from Streamlit secrets/environment
         file_id = os.getenv("GD_CLEAN_FILE_ID", "").strip()
-
         if not file_id:
-            st.error("❌ GD_CLEAN_FILE_ID is not set. Add it in Streamlit Secrets.")
+            st.error("❌ GD_CLEAN_FILE_ID not set. Add it in Streamlit Secrets (Settings → Secrets).")
             return None, None, None
 
         st.info("📥 Downloading dataset from Google Drive... (only first time, then cached)")
 
-        # Google Drive download URL
         URL = "https://drive.google.com/uc?export=download"
-
         session = requests.Session()
         response = session.get(URL, params={'id': file_id}, stream=True)
 
-        # Detect confirmation token (needed for files >100MB)
+        # Check for confirmation token for very large files
         def get_confirm_token(resp):
-            for key, value in resp.cookies.items():
-                if key.startswith("download_warning"):
-                    return value
+            for k, v in resp.cookies.items():
+                if k.startswith("download_warning"):
+                    return v
             return None
 
         token = get_confirm_token(response)
-
         if token:
-            response = session.get(
-                URL,
-                params={'id': file_id, 'confirm': token},
-                stream=True
-            )
+            response = session.get(URL, params={'id': file_id, 'confirm': token}, stream=True)
 
-        # Write file to a temporary path
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-
+        # Stream to temp file
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
         CHUNK_SIZE = 32768
         for chunk in response.iter_content(CHUNK_SIZE):
             if chunk:
-                tmp_file.write(chunk)
+                tmp.write(chunk)
+        tmp.flush()
 
-        tmp_file.flush()
+        # Try reading CSV (no parse_dates yet - we'll attempt after we inspect columns)
+        try:
+            df = pd.read_csv(tmp.name, low_memory=False)
+        except Exception as e:
+            st.error(f"❌ Failed to read CSV. Error: {e}")
+            return None, None, None
 
-        # Load CSV into pandas
-        df = pd.read_csv(tmp_file.name, low_memory=False)
+        # Show columns and first rows so you can see what was downloaded
+        st.write("🔎 Columns detected in the downloaded CSV:", list(df.columns))
+        st.write("📄 File preview (first 5 rows):")
+        st.dataframe(df.head(5))
 
-        # Parse date columns (same as your original code)
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        # Normalize column names (strip whitespace)
+        df.columns = [c.strip() for c in df.columns]
 
-        # Remove invalid rows
+        # If 'date' exists, parse it. Otherwise try alternatives
+        date_col_candidates = [
+            'date', 'Date', 'DATE',
+            'datetime', 'DateTime', 'DATE_TIME',
+            'incident_date', 'occurred_on', 'report_date', 'occurred_at',
+            'crime_date', 'offense_date'
+        ]
+
+        found_date_col = None
+        for cand in date_col_candidates:
+            if cand in df.columns:
+                found_date_col = cand
+                break
+
+        # If no candidate found, try to infer a datetime column by dtype or name similarity
+        if not found_date_col:
+            # pick any column with dtype object but containing '-' or '/' in many rows
+            for col in df.columns:
+                if df[col].dtype == object:
+                    sample = df[col].dropna().astype(str).head(20).tolist()
+                    if any('/' in s or '-' in s or ':' in s for s in sample):
+                        found_date_col = col
+                        break
+
+        if not found_date_col:
+            st.error("❌ No date-like column found in CSV. Please check your Google Drive file. Columns found:")
+            st.warning(f"{list(df.columns)}")
+            st.info("Look for a column containing dates (e.g., 'date', 'datetime', 'incident_date') or rename it to 'date'.")
+            return None, None, None
+
+        # Try to parse the found date column into datetime
+        try:
+            df['date'] = pd.to_datetime(df[found_date_col], errors='coerce')
+        except Exception as e:
+            st.error(f"❌ Could not parse column '{found_date_col}' as dates. Error: {e}")
+            st.info("Please ensure the column contains parseable date/datetime strings (e.g., YYYY-MM-DD).")
+            return None, None, None
+
+        # Drop rows with invalid dates (same behaviour as original)
         df = df.dropna(subset=['date'])
+        if len(df) == 0:
+            st.error("❌ After parsing, no valid dates remain in the dataset. Check date format or the selected file.")
+            return None, None, None
 
-        # Get date range
-        min_date = df['date'].min()
-        max_date = df['date'].max()
+        # Also keep original datetime column if present and parse it
+        if 'datetime' in df.columns and df['datetime'].dtype == object:
+            try:
+                df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+            except Exception:
+                pass
 
-        return df, min_date, max_date
+        # Show what date column was used
+        st.success(f"✅ Using column '{found_date_col}' as the date field (parsed to 'date').")
+        st.write("Date range in dataset:", str(df['date'].min()), "→", str(df['date'].max()))
+
+        return df, df['date'].min(), df['date'].max()
 
     except Exception as e:
-        st.error(f"❌ **Error loading data**: {str(e)}")
+        st.error(f"❌ Unexpected error loading data: {e}")
         return None, None, None
 
 def create_main_header():
