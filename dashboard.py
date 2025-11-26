@@ -1,5 +1,6 @@
 # dashboard.py - Interactive Crime Prediction Dashboard (Complete Fixed Version)
 import streamlit as st
+import os
 import pandas as pd
 import numpy as np
 import plotly.express as px
